@@ -5,6 +5,8 @@ const API_TARGET = 'https://iotsensor-production-9d9f.up.railway.app'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // Served from https://<user>.github.io/TubSensor-FrontEndReact/ on GitHub Pages.
+  base: '/TubSensor-FrontEndReact/',
   plugins: [react()],
   server: {
     proxy: {

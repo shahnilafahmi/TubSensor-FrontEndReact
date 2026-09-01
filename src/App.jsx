@@ -1,11 +1,11 @@
-import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
+import { HashRouter, Routes, Route, Link } from "react-router-dom";
 
 import Home from "./pages/home";
 import TubSensorTest from "./pages/tubsensor/tubsensortest";
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <div>
       
 
@@ -43,7 +43,7 @@ function App() {
              
         </Routes>
       </div>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 
