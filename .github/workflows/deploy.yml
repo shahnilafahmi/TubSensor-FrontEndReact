@@ -24,12 +24,12 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      # VITE_API_BASE comes from .env.production (committed). To override it
+      # without editing that file, set a repo variable of the same name and
+      # uncomment the env block below.
       - run: npm run build
-        env:
-          # Set this in repo Settings > Secrets and variables > Actions > Variables
-          # to your backend origin (e.g. https://your-backend.example.com) once you
-          # have a non-Railway host. Leave empty to deploy the UI without a live API.
-          VITE_API_BASE: ${{ vars.VITE_API_BASE }}
+        # env:
+        #   VITE_API_BASE: ${{ vars.VITE_API_BASE }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
