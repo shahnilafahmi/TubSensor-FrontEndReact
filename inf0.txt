@@ -1,0 +1,4 @@
+npm create vite@latest my-react-app -- --template react (To create app)
+
+ http://localhost:5173/
+https://claude.ai/settings/billing
