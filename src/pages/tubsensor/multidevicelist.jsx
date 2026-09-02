@@ -1,5 +1,12 @@
 import { useState } from "react";
 
+// In dev, "/api" is proxied to the Railway backend by Vite (see vite.config.js).
+// In production, VITE_API_BASE points at the backend origin.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+// Command sent to the device when its DeviceId is clicked.
+const DEVICE_COMMAND = "GET_STATUS";
+
 const styles = {
   page: {
     minHeight: "100vh",
@@ -49,56 +56,78 @@ const styles = {
     border: "1px solid #b3d7f2",
     borderRadius: "8px",
     padding: "28px",
-    maxWidth: "640px",
+    maxWidth: "760px",
   },
   detailHeading: {
     margin: "0 0 20px",
     color: "#001f54",
-    fontSize: "40px",
+    fontSize: "44px",
   },
-  detailRow: {
-    fontSize: "26px",
+  detailBody: {
+    fontSize: "28px",
     color: "#0d1b2a",
-    margin: "10px 0",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    margin: 0,
   },
-  detailLabel: {
-    fontWeight: "bold",
-    color: "#001f54",
+  detailError: {
+    fontSize: "28px",
+    color: "#b00020",
+    margin: 0,
   },
 };
 
 const DEVICES = [
-  {
-    deviceId: "device1",
-    macAddress: "A4:CF:12:9B:00:11",
-    ipAddress: "192.168.1.101",
-    status: "Online",
-    temperature: "37.2 °C",
-    lastSeen: "2026-09-02 10:14:03",
-    firmware: "v1.4.2",
-  },
-  {
-    deviceId: "device2",
-    macAddress: "A4:CF:12:9B:00:22",
-    ipAddress: "192.168.1.102",
-    status: "Offline",
-    temperature: "-- °C",
-    lastSeen: "2026-09-01 22:47:51",
-    firmware: "v1.4.0",
-  },
-  {
-    deviceId: "device3",
-    macAddress: "A4:CF:12:9B:00:33",
-    ipAddress: "192.168.1.103",
-    status: "Online",
-    temperature: "39.8 °C",
-    lastSeen: "2026-09-02 10:13:58",
-    firmware: "v1.4.2",
-  },
+  { deviceId: "device1", macAddress: "A4:CF:12:9B:00:11", ipAddress: "192.168.1.101" },
+  { deviceId: "device2", macAddress: "A4:CF:12:9B:00:22", ipAddress: "192.168.1.102" },
+  { deviceId: "device3", macAddress: "A4:CF:12:9B:00:33", ipAddress: "192.168.1.103" },
 ];
 
 function MultiDeviceList() {
-  const [selected, setSelected] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const handleDeviceClick = async (deviceId) => {
+    setSelectedId(deviceId);
+    setLoading(true);
+    setResult(null);
+    setError(null);
+
+    const url = `${API_BASE}/api/mqtt/publisher/command-dynamic?topic=${deviceId}/response`;
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: DEVICE_COMMAND,
+      });
+
+      const text = await response.text();
+      let payload;
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
+
+      if (!response.ok) {
+        setError(
+          `Request failed (${response.status})\n` +
+            (typeof payload === "string" ? payload : JSON.stringify(payload, null, 2))
+        );
+      } else if (payload && typeof payload === "object" && "response" in payload) {
+        setResult(String(payload.response));
+      } else {
+        setResult(typeof payload === "string" ? payload : JSON.stringify(payload, null, 2));
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div style={styles.page}>
@@ -118,7 +147,7 @@ function MultiDeviceList() {
                 <button
                   type="button"
                   style={styles.link}
-                  onClick={() => setSelected(device)}
+                  onClick={() => handleDeviceClick(device.deviceId)}
                 >
                   {device.deviceId}
                 </button>
@@ -130,33 +159,12 @@ function MultiDeviceList() {
         </tbody>
       </table>
 
-      {selected && (
+      {selectedId && (
         <div style={styles.detail}>
-          <h1 style={styles.detailHeading}>{selected.deviceId}</h1>
-          <p style={styles.detailRow}>
-            <span style={styles.detailLabel}>Status: </span>
-            {selected.status}
-          </p>
-          <p style={styles.detailRow}>
-            <span style={styles.detailLabel}>Temperature: </span>
-            {selected.temperature}
-          </p>
-          <p style={styles.detailRow}>
-            <span style={styles.detailLabel}>Mac Address: </span>
-            {selected.macAddress}
-          </p>
-          <p style={styles.detailRow}>
-            <span style={styles.detailLabel}>IP Address: </span>
-            {selected.ipAddress}
-          </p>
-          <p style={styles.detailRow}>
-            <span style={styles.detailLabel}>Firmware: </span>
-            {selected.firmware}
-          </p>
-          <p style={styles.detailRow}>
-            <span style={styles.detailLabel}>Last Seen: </span>
-            {selected.lastSeen}
-          </p>
+          <h1 style={styles.detailHeading}>{selectedId}</h1>
+          {loading && <p style={styles.detailBody}>Loading...</p>}
+          {!loading && error && <p style={styles.detailError}>{error}</p>}
+          {!loading && !error && result && <p style={styles.detailBody}>{result}</p>}
         </div>
       )}
     </div>
