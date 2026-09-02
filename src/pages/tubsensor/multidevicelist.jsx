@@ -77,6 +77,18 @@ const styles = {
   },
 };
 
+// Turn "STATUS MODE=OFF TARGET=-89.0 TUB=38.5" into [{field:"MODE",value:"OFF"}, ...]
+function parseStatus(text) {
+  return String(text)
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.includes("="))
+    .map((token) => {
+      const i = token.indexOf("=");
+      return { field: token.slice(0, i), value: token.slice(i + 1) };
+    });
+}
+
 const DEVICES = [
   { deviceId: "device1", macAddress: "A4:CF:12:9B:00:11", ipAddress: "192.168.1.101" },
   { deviceId: "device2", macAddress: "A4:CF:12:9B:00:22", ipAddress: "192.168.1.102" },
@@ -164,7 +176,30 @@ function MultiDeviceList() {
           <h1 style={styles.detailHeading}>{selectedId}</h1>
           {loading && <p style={styles.detailBody}>Loading...</p>}
           {!loading && error && <p style={styles.detailError}>{error}</p>}
-          {!loading && !error && result && <p style={styles.detailBody}>{result}</p>}
+          {!loading && !error && result && (() => {
+            const rows = parseStatus(result);
+            if (rows.length === 0) {
+              return <p style={styles.detailBody}>{result}</p>;
+            }
+            return (
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Field</th>
+                    <th style={styles.th}>Value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row) => (
+                    <tr key={row.field}>
+                      <td style={styles.td}>{row.field}</td>
+                      <td style={styles.td}>{row.value}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            );
+          })()}
         </div>
       )}
     </div>
