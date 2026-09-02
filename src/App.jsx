@@ -2,6 +2,7 @@ import { HashRouter, Routes, Route, Link } from "react-router-dom";
 
 import Home from "./pages/home";
 import TubSensorTest from "./pages/tubsensor/tubsensortest";
+import MultiDeviceList from "./pages/tubsensor/multidevicelist";
 
 function App() {
   return (
@@ -30,7 +31,11 @@ function App() {
       <Link to="/tubsensortest">Tub Sensor Test</Link>
     </li>
 
-  
+    <li>
+      <Link to="/multidevicelist">Multi Device List</Link>
+    </li>
+
+
 
   </ul>
 </nav>
@@ -39,6 +44,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/tubsensortest" element={<TubSensorTest />} />
+          <Route path="/multidevicelist" element={<MultiDeviceList />} />
           
              
         </Routes>
