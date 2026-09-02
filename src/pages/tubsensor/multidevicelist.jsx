@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 // In dev, "/api" is proxied to the Railway backend by Vite (see vite.config.js).
 // In production, VITE_API_BASE points at the backend origin.
@@ -75,6 +75,24 @@ const styles = {
     color: "#b00020",
     margin: 0,
   },
+  rawLabel: {
+    fontSize: "13px",
+    fontWeight: "bold",
+    color: "#4a6178",
+    margin: "0 0 6px",
+  },
+  rawText: {
+    fontFamily: "Consolas, monospace",
+    fontSize: "14px",
+    color: "#0d1b2a",
+    backgroundColor: "#f2f8ff",
+    border: "1px solid #d6e8fb",
+    borderRadius: "6px",
+    padding: "12px 14px",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    margin: "0 0 20px",
+  },
 };
 
 // Turn "STATUS MODE=OFF TARGET=-89.0 TUB=38.5" into [{field:"MODE",value:"OFF"}, ...]
@@ -100,8 +118,10 @@ function MultiDeviceList() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const requestSeq = useRef(0);
 
   const handleDeviceClick = async (deviceId) => {
+    const seq = ++requestSeq.current;
     setSelectedId(deviceId);
     setLoading(true);
     setResult(null);
@@ -124,20 +144,33 @@ function MultiDeviceList() {
         payload = text;
       }
 
+      // A later click already superseded this request — drop its result.
+      if (seq !== requestSeq.current) return;
+
       if (!response.ok) {
         setError(
           `Request failed (${response.status})\n` +
             (typeof payload === "string" ? payload : JSON.stringify(payload, null, 2))
         );
       } else if (payload && typeof payload === "object" && "response" in payload) {
-        setResult(String(payload.response));
+        setResult({
+          deviceId,
+          topic: `${deviceId}/response`,
+          raw: String(payload.response),
+          at: new Date().toLocaleTimeString(),
+        });
       } else {
-        setResult(typeof payload === "string" ? payload : JSON.stringify(payload, null, 2));
+        setResult({
+          deviceId,
+          topic: `${deviceId}/response`,
+          raw: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2),
+          at: new Date().toLocaleTimeString(),
+        });
       }
     } catch (err) {
-      setError(err.message);
+      if (seq === requestSeq.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   };
 
@@ -176,30 +209,36 @@ function MultiDeviceList() {
           <h1 style={styles.detailHeading}>{selectedId}</h1>
           {loading && <p style={styles.detailBody}>Loading...</p>}
           {!loading && error && <p style={styles.detailError}>{error}</p>}
-          {!loading && !error && result && (() => {
-            const rows = parseStatus(result);
-            if (rows.length === 0) {
-              return <p style={styles.detailBody}>{result}</p>;
-            }
-            return (
-              <table style={styles.table}>
-                <thead>
-                  <tr>
-                    <th style={styles.th}>Field</th>
-                    <th style={styles.th}>Value</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => (
-                    <tr key={row.field}>
-                      <td style={styles.td}>{row.field}</td>
-                      <td style={styles.td}>{row.value}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            );
-          })()}
+          {!loading && !error && result && (
+            <>
+              <p style={styles.rawLabel}>
+                {result.topic} &middot; {result.at}
+              </p>
+              <pre style={styles.rawText}>{result.raw}</pre>
+              {(() => {
+                const rows = parseStatus(result.raw);
+                if (rows.length === 0) return null;
+                return (
+                  <table style={styles.table}>
+                    <thead>
+                      <tr>
+                        <th style={styles.th}>Field</th>
+                        <th style={styles.th}>Value</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row) => (
+                        <tr key={row.field}>
+                          <td style={styles.td}>{row.field}</td>
+                          <td style={styles.td}>{row.value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
+            </>
+          )}
         </div>
       )}
     </div>
