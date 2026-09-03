@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // In dev, "/api" is proxied to the Railway backend by Vite (see vite.config.js).
 // In production, VITE_API_BASE points at the backend origin.
@@ -6,6 +6,9 @@ const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 // Command sent to the device when its DeviceId is clicked.
 const DEVICE_COMMAND = "GET_STATUS";
+
+// The detail panel re-polls the selected device this often.
+const REFRESH_MS = 5000;
 
 const styles = {
   page: {
@@ -110,7 +113,6 @@ function parseStatus(text) {
 const DEVICES = [
   { deviceId: "device1", macAddress: "A4:CF:12:9B:00:11", ipAddress: "192.168.1.101" },
   { deviceId: "device2", macAddress: "A4:CF:12:9B:00:22", ipAddress: "192.168.1.102" },
-  { deviceId: "device3", macAddress: "A4:CF:12:9B:00:33", ipAddress: "192.168.1.103" },
 ];
 
 function MultiDeviceList() {
@@ -120,12 +122,16 @@ function MultiDeviceList() {
   const [error, setError] = useState(null);
   const requestSeq = useRef(0);
 
-  const handleDeviceClick = async (deviceId) => {
+  // Poll the given device once. `initial` = first fetch after a click:
+  // it clears the panel and surfaces errors. Periodic refreshes keep the
+  // last good data on screen if a poll fails.
+  const fetchStatus = useCallback(async (deviceId, { initial = false } = {}) => {
     const seq = ++requestSeq.current;
-    setSelectedId(deviceId);
-    setLoading(true);
-    setResult(null);
-    setError(null);
+    if (initial) {
+      setLoading(true);
+      setResult(null);
+      setError(null);
+    }
 
     const url = `${API_BASE}/api/mqtt/publisher/command-dynamic?topic=${deviceId}/response`;
 
@@ -144,35 +150,54 @@ function MultiDeviceList() {
         payload = text;
       }
 
-      // A later click already superseded this request — drop its result.
+      // A later click / tick already superseded this request — drop its result.
       if (seq !== requestSeq.current) return;
 
       if (!response.ok) {
-        setError(
-          `Request failed (${response.status})\n` +
-            (typeof payload === "string" ? payload : JSON.stringify(payload, null, 2))
-        );
-      } else if (payload && typeof payload === "object" && "response" in payload) {
-        setResult({
-          deviceId,
-          topic: `${deviceId}/response`,
-          raw: String(payload.response),
-          at: new Date().toLocaleTimeString(),
-        });
-      } else {
-        setResult({
-          deviceId,
-          topic: `${deviceId}/response`,
-          raw: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2),
-          at: new Date().toLocaleTimeString(),
-        });
+        if (initial) {
+          setError(
+            `Request failed (${response.status})\n` +
+              (typeof payload === "string" ? payload : JSON.stringify(payload, null, 2))
+          );
+        }
+        return;
       }
+
+      const raw =
+        payload && typeof payload === "object" && "response" in payload
+          ? String(payload.response)
+          : typeof payload === "string"
+          ? payload
+          : JSON.stringify(payload, null, 2);
+
+      setError(null);
+      setResult({
+        deviceId,
+        topic: `${deviceId}/response`,
+        raw,
+        at: new Date().toLocaleTimeString(),
+      });
     } catch (err) {
-      if (seq === requestSeq.current) setError(err.message);
+      if (seq === requestSeq.current && initial) setError(err.message);
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
+  }, []);
+
+  const handleDeviceClick = (deviceId) => {
+    setSelectedId(deviceId);
+    fetchStatus(deviceId, { initial: true });
   };
+
+  // While a device is selected, re-call the same API every REFRESH_MS using the
+  // deviceId shown in the heading (device1 / device2 / ...).
+  useEffect(() => {
+    if (!selectedId) return undefined;
+    const timer = setInterval(() => {
+      fetchStatus(selectedId);
+    }, REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [selectedId, fetchStatus]);
 
   return (
     <div style={styles.page}>
@@ -212,7 +237,7 @@ function MultiDeviceList() {
           {!loading && !error && result && (
             <>
               <p style={styles.rawLabel}>
-                {result.topic} &middot; {result.at}
+                {result.topic} &middot; {result.at} &middot; auto-refresh {REFRESH_MS / 1000}s
               </p>
               <pre style={styles.rawText}>{result.raw}</pre>
               {(() => {
