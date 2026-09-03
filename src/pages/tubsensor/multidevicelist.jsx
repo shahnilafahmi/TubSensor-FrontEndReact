@@ -4,11 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // In production, VITE_API_BASE points at the backend origin.
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
-// Command sent to the device when its DeviceId is clicked.
+// Command sent to the device on every poll.
 const DEVICE_COMMAND = "GET_STATUS";
 
-// The detail panel re-polls the selected device this often.
+// Both the detail panel and the fault table re-poll this often.
 const REFRESH_MS = 5000;
+
+const RED = "#d40000";
 
 const styles = {
   page: {
@@ -22,13 +24,19 @@ const styles = {
     color: "#001f54",
     marginBottom: "24px",
   },
+  tablesRow: {
+    display: "flex",
+    gap: "24px",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+  },
   table: {
     borderCollapse: "collapse",
     backgroundColor: "#ffffff",
     border: "1px solid #b3d7f2",
     borderRadius: "8px",
     overflow: "hidden",
-    minWidth: "520px",
+    minWidth: "420px",
   },
   th: {
     backgroundColor: "#001f54",
@@ -42,6 +50,20 @@ const styles = {
     padding: "12px 16px",
     fontSize: "14px",
     color: "#0d1b2a",
+  },
+  tdFaultId: {
+    borderTop: "1px solid #e0eefb",
+    padding: "12px 16px",
+    fontSize: "14px",
+    color: RED,
+    fontWeight: "bold",
+  },
+  tdFaultValue: {
+    borderTop: "1px solid #e0eefb",
+    padding: "12px 16px",
+    fontSize: "14px",
+    color: RED,
+    wordBreak: "break-word",
   },
   link: {
     background: "none",
@@ -76,6 +98,8 @@ const styles = {
   detailError: {
     fontSize: "28px",
     color: "#b00020",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
     margin: 0,
   },
   rawLabel: {
@@ -98,7 +122,7 @@ const styles = {
   },
 };
 
-// Turn "STATUS MODE=OFF TARGET=-89.0 TUB=38.5" into [{field:"MODE",value:"OFF"}, ...]
+// Turn "STATUS MODE=OFF TARGET=-89.0 FAULT=NONE" into [{field:"MODE",value:"OFF"}, ...]
 function parseStatus(text) {
   return String(text)
     .trim()
@@ -108,6 +132,55 @@ function parseStatus(text) {
       const i = token.indexOf("=");
       return { field: token.slice(0, i), value: token.slice(i + 1) };
     });
+}
+
+function faultOf(raw) {
+  const match = parseStatus(raw).find((row) => row.field === "FAULT");
+  return match ? match.value : null;
+}
+
+// Normalize an error body into a single readable line.
+function describeError(payload, status) {
+  if (payload && typeof payload === "object") {
+    const parts = [payload.message, payload.error].filter(Boolean);
+    if (parts.length) return parts.join(" — ");
+  }
+  if (typeof payload === "string" && payload.trim()) return payload.trim();
+  return `HTTP ${status}`;
+}
+
+// One round-trip to a device. Never throws: returns {deviceId, ok, raw?} or
+// {deviceId, ok:false, error}.
+async function probeDevice(deviceId) {
+  const url = `${API_BASE}/api/mqtt/publisher/command-dynamic?topic=${deviceId}/response`;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: DEVICE_COMMAND,
+    });
+    const text = await response.text();
+    let payload;
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+
+    if (!response.ok) {
+      return { deviceId, ok: false, error: describeError(payload, response.status) };
+    }
+
+    const raw =
+      payload && typeof payload === "object" && "response" in payload
+        ? String(payload.response)
+        : typeof payload === "string"
+        ? payload
+        : JSON.stringify(payload, null, 2);
+    return { deviceId, ok: true, raw };
+  } catch (err) {
+    return { deviceId, ok: false, error: err.message };
+  }
 }
 
 const DEVICES = [
@@ -120,11 +193,10 @@ function MultiDeviceList() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [faults, setFaults] = useState([]);
   const requestSeq = useRef(0);
 
-  // Poll the given device once. `initial` = first fetch after a click:
-  // it clears the panel and surfaces errors. Periodic refreshes keep the
-  // last good data on screen if a poll fails.
+  // Detail panel: poll the selected device.
   const fetchStatus = useCallback(async (deviceId, { initial = false } = {}) => {
     const seq = ++requestSeq.current;
     if (initial) {
@@ -133,55 +205,22 @@ function MultiDeviceList() {
       setError(null);
     }
 
-    const url = `${API_BASE}/api/mqtt/publisher/command-dynamic?topic=${deviceId}/response`;
+    const res = await probeDevice(deviceId);
+    if (seq !== requestSeq.current) return; // superseded by a newer click/tick
 
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain" },
-        body: DEVICE_COMMAND,
-      });
-
-      const text = await response.text();
-      let payload;
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = text;
-      }
-
-      // A later click / tick already superseded this request — drop its result.
-      if (seq !== requestSeq.current) return;
-
-      if (!response.ok) {
-        if (initial) {
-          setError(
-            `Request failed (${response.status})\n` +
-              (typeof payload === "string" ? payload : JSON.stringify(payload, null, 2))
-          );
-        }
-        return;
-      }
-
-      const raw =
-        payload && typeof payload === "object" && "response" in payload
-          ? String(payload.response)
-          : typeof payload === "string"
-          ? payload
-          : JSON.stringify(payload, null, 2);
-
+    if (!res.ok) {
+      setError(res.error);
+      setResult(null);
+    } else {
       setError(null);
       setResult({
         deviceId,
         topic: `${deviceId}/response`,
-        raw,
+        raw: res.raw,
         at: new Date().toLocaleTimeString(),
       });
-    } catch (err) {
-      if (seq === requestSeq.current && initial) setError(err.message);
-    } finally {
-      if (seq === requestSeq.current) setLoading(false);
     }
+    setLoading(false);
   }, []);
 
   const handleDeviceClick = (deviceId) => {
@@ -189,45 +228,113 @@ function MultiDeviceList() {
     fetchStatus(deviceId, { initial: true });
   };
 
-  // While a device is selected, re-call the same API every REFRESH_MS using the
-  // deviceId shown in the heading (device1 / device2 / ...).
+  // Detail panel auto-refresh every REFRESH_MS for the selected device.
   useEffect(() => {
     if (!selectedId) return undefined;
-    const timer = setInterval(() => {
-      fetchStatus(selectedId);
-    }, REFRESH_MS);
-    return () => clearInterval(timer);
+    let cancelled = false;
+    let timer;
+    const tick = async () => {
+      await fetchStatus(selectedId);
+      if (!cancelled) timer = setTimeout(tick, REFRESH_MS);
+    };
+    timer = setTimeout(tick, REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [selectedId, fetchStatus]);
+
+  // Fault table: loop every device from the list, hit the API, keep only the
+  // ones where FAULT != NONE or the call errored. Re-runs every REFRESH_MS.
+  useEffect(() => {
+    let cancelled = false;
+    let timer;
+
+    const pollAll = async () => {
+      const results = await Promise.all(
+        DEVICES.map((device) => probeDevice(device.deviceId))
+      );
+      if (cancelled) return;
+
+      const rows = [];
+      for (const res of results) {
+        if (!res.ok) {
+          rows.push({ deviceId: res.deviceId, fault: res.error });
+        } else {
+          const fault = faultOf(res.raw);
+          if (fault && fault !== "NONE") {
+            rows.push({ deviceId: res.deviceId, fault });
+          }
+        }
+      }
+      setFaults(rows);
+      timer = setTimeout(pollAll, REFRESH_MS);
+    };
+
+    pollAll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, []);
 
   return (
     <div style={styles.page}>
       <h2 style={styles.heading}>Devices</h2>
-      <table style={styles.table}>
-        <thead>
-          <tr>
-            <th style={styles.th}>DeviceId</th>
-            <th style={styles.th}>Mac Address</th>
-            <th style={styles.th}>IP Address</th>
-          </tr>
-        </thead>
-        <tbody>
-          {DEVICES.map((device) => (
-            <tr key={device.deviceId}>
-              <td style={styles.td}>
-                <button
-                  type="button"
-                  style={styles.link}
-                  onClick={() => handleDeviceClick(device.deviceId)}
-                >
-                  {device.deviceId}
-                </button>
-              </td>
-              <td style={styles.td}>{device.macAddress}</td>
-              <td style={styles.td}>{device.ipAddress}</td>
+
+      <div style={styles.tablesRow}>
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>DeviceId</th>
+              <th style={styles.th}>Mac Address</th>
+              <th style={styles.th}>IP Address</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {DEVICES.map((device) => (
+              <tr key={device.deviceId}>
+                <td style={styles.td}>
+                  <button
+                    type="button"
+                    style={styles.link}
+                    onClick={() => handleDeviceClick(device.deviceId)}
+                  >
+                    {device.deviceId}
+                  </button>
+                </td>
+                <td style={styles.td}>{device.macAddress}</td>
+                <td style={styles.td}>{device.ipAddress}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <table style={styles.table}>
+          <thead>
+            <tr>
+              <th style={styles.th}>DeviceId</th>
+              <th style={styles.th}>FAULT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {faults.length === 0 ? (
+              <tr>
+                <td style={styles.td} colSpan={2}>
+                  No faults
+                </td>
+              </tr>
+            ) : (
+              faults.map((row) => (
+                <tr key={row.deviceId}>
+                  <td style={styles.tdFaultId}>{row.deviceId}</td>
+                  <td style={styles.tdFaultValue}>{row.fault}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
 
       {selectedId && (
         <div style={styles.detail}>
